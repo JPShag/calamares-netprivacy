@@ -125,8 +125,6 @@ NetPrivacyJob::writeMacConfig( const QString& root ) const
         s << "[connection]\nwifi.cloned-mac-address=stable\nethernet.cloned-mac-address=stable\n";
         break;
     case 3: 
-        if ( m_macAddress.isEmpty() )
-            return Calamares::JobResult::error( tr( "Error" ), tr( "No MAC address provided." ) );
         s << "[connection]\nwifi.cloned-mac-address=" << m_macAddress << "\n";
         s << "ethernet.cloned-mac-address=" << m_macAddress << "\n";
         break;
