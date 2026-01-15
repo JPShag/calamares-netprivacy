@@ -228,7 +228,19 @@ NetPrivacyViewStep::setConfigurationMap( const QVariantMap& cfg )
                     cWarning() << "NetPrivacyViewStep: Skipping invalid custom vendor entry:" << v.id;
                     continue;
                 }
-                m_vendors.append( v );
+                bool replaced = false;
+                for ( auto& existing : m_vendors )
+                {
+                    if ( existing.id == v.id )
+                    {
+                        existing.name = v.name;
+                        existing.oui = v.oui;
+                        replaced = true;
+                        break;
+                    }
+                }
+                if ( !replaced )
+                    m_vendors.append( v );
             }
         }
     }
@@ -268,6 +280,8 @@ NetPrivacyViewStep::vendorList() const
 
 void NetPrivacyViewStep::setMacPolicy( int p )
 {
+    if ( p < 0 || p > 3 )
+        p = 0;
     if ( m_macPolicy != p ) { m_macPolicy = p; Q_EMIT macPolicyChanged(); Q_EMIT nextStatusChanged( isNextEnabled() ); }
 }
 
@@ -278,11 +292,24 @@ void NetPrivacyViewStep::setMacAddress( const QString& a )
 
 void NetPrivacyViewStep::setSelectedVendor( const QString& v )
 {
+    bool foundVendor = false;
+    for ( const auto& entry : m_vendors )
+    {
+        if ( entry.id == v )
+        {
+            foundVendor = true;
+            break;
+        }
+    }
+    if ( !foundVendor )
+        return;
     if ( m_selectedVendor != v ) { m_selectedVendor = v; Q_EMIT selectedVendorChanged(); }
 }
 
 void NetPrivacyViewStep::setIpv6Mode( int m )
 {
+    if ( m < 0 || m > 2 )
+        m = 0;
     if ( m_ipv6Mode != m ) { m_ipv6Mode = m; Q_EMIT ipv6ModeChanged(); }
 }
 

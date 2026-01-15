@@ -128,7 +128,7 @@ Rectangle {
                         visible: radioFixed.checked
                         Layout.leftMargin: 36
                         Layout.preferredWidth: 200
-                        placeholderText: "XX:XX:XX:XX:XX:XX"
+                        placeholderText: qsTr("XX:XX:XX:XX:XX:XX")
                         text: config.macAddress
                         font.family: "monospace"
                         font.pixelSize: fontBody
