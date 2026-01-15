@@ -31,7 +31,6 @@ class PLUGINDLLEXPORT NetPrivacyViewStep : public Calamares::ViewStep
     Q_PROPERTY( QString macAddress READ macAddress WRITE setMacAddress NOTIFY macAddressChanged )
     Q_PROPERTY( QString selectedVendor READ selectedVendor WRITE setSelectedVendor NOTIFY selectedVendorChanged )
     Q_PROPERTY( QVariantList vendorList READ vendorList CONSTANT )
-    Q_PROPERTY( bool ipv6Privacy READ ipv6Privacy WRITE setIpv6Privacy NOTIFY ipv6PrivacyChanged )
     Q_PROPERTY( int ipv6Mode READ ipv6Mode WRITE setIpv6Mode NOTIFY ipv6ModeChanged )
 
 public:
@@ -57,13 +56,11 @@ public:
     QString macAddress() const;
     QString selectedVendor() const;
     QVariantList vendorList() const;
-    bool ipv6Privacy() const;
     int ipv6Mode() const;
 
     void setMacPolicy( int policy );
     void setMacAddress( const QString& address );
     void setSelectedVendor( const QString& vendorId );
-    void setIpv6Privacy( bool enable );
     void setIpv6Mode( int mode );
 
     Q_INVOKABLE QString generatePreviewMac() const;
@@ -72,7 +69,6 @@ Q_SIGNALS:
     void macPolicyChanged();
     void macAddressChanged();
     void selectedVendorChanged();
-    void ipv6PrivacyChanged();
     void ipv6ModeChanged();
 
 private:
@@ -83,7 +79,6 @@ private:
     int m_macPolicy = 0;
     QString m_macAddress;
     QString m_selectedVendor;
-    bool m_ipv6Privacy = false;
     int m_ipv6Mode = 0;
     QList< VendorOUI > m_vendors;
 };

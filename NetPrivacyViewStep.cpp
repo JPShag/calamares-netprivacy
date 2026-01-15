@@ -136,7 +136,7 @@ NetPrivacyViewStep::jobs() const
     {
         QString vendorOUI = ( m_macPolicy == 2 ) ? getVendorOUI( m_selectedVendor ) : QString();
         list.append( Calamares::job_ptr(
-            new NetPrivacyJob( m_macPolicy, m_macAddress, vendorOUI, m_ipv6Privacy, m_ipv6Mode ) ) );
+            new NetPrivacyJob( m_macPolicy, m_macAddress, vendorOUI, m_ipv6Mode ) ) );
     }
     return list;
 }
@@ -145,12 +145,32 @@ void
 NetPrivacyViewStep::onActivate()
 {
     auto* gs = Calamares::JobQueue::instance()->globalStorage();
+    if ( !gs )
+    {
+        cWarning() << "NetPrivacyViewStep: No GlobalStorage available.";
+        return;
+    }
     if ( gs->contains( QStringLiteral( "netprivacy_macPolicy" ) ) )
     {
         m_macPolicy = gs->value( QStringLiteral( "netprivacy_macPolicy" ) ).toInt();
         m_macAddress = gs->value( QStringLiteral( "netprivacy_macAddress" ) ).toString();
         m_selectedVendor = gs->value( QStringLiteral( "netprivacy_selectedVendor" ) ).toString();
         m_ipv6Mode = gs->value( QStringLiteral( "netprivacy_ipv6Mode" ) ).toInt();
+        if ( m_macPolicy < 0 || m_macPolicy > 3 )
+            m_macPolicy = 0;
+        if ( m_ipv6Mode < 0 || m_ipv6Mode > 2 )
+            m_ipv6Mode = 0;
+        bool foundVendor = false;
+        for ( const auto& v : m_vendors )
+        {
+            if ( v.id == m_selectedVendor )
+            {
+                foundVendor = true;
+                break;
+            }
+        }
+        if ( !foundVendor && !m_vendors.isEmpty() )
+            m_selectedVendor = m_vendors.first().id;
         Q_EMIT macPolicyChanged();
         Q_EMIT macAddressChanged();
         Q_EMIT selectedVendorChanged();
@@ -162,6 +182,11 @@ void
 NetPrivacyViewStep::onLeave()
 {
     auto* gs = Calamares::JobQueue::instance()->globalStorage();
+    if ( !gs )
+    {
+        cWarning() << "NetPrivacyViewStep: No GlobalStorage available.";
+        return;
+    }
     gs->insert( QStringLiteral( "netprivacy_macPolicy" ), m_macPolicy );
     gs->insert( QStringLiteral( "netprivacy_macAddress" ), m_macAddress );
     gs->insert( QStringLiteral( "netprivacy_selectedVendor" ), m_selectedVendor );
@@ -173,11 +198,16 @@ NetPrivacyViewStep::onLeave()
 void
 NetPrivacyViewStep::setConfigurationMap( const QVariantMap& cfg )
 {
+    static const QRegularExpression ouiRegex( QStringLiteral( "^[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}$" ) );
+
     m_macPolicy = Calamares::getInteger( cfg, "macPolicy", 0 );
     m_macAddress = Calamares::getString( cfg, "macAddress" );
     m_selectedVendor = Calamares::getString( cfg, "selectedVendor" );
-    m_ipv6Privacy = Calamares::getBool( cfg, "ipv6Privacy", false );
     m_ipv6Mode = Calamares::getInteger( cfg, "ipv6Mode", 0 );
+    if ( m_macPolicy < 0 || m_macPolicy > 3 )
+        m_macPolicy = 0;
+    if ( m_ipv6Mode < 0 || m_ipv6Mode > 2 )
+        m_ipv6Mode = 0;
 
     if ( m_selectedVendor.isEmpty() && !m_vendors.isEmpty() )
         m_selectedVendor = m_vendors.first().id;
@@ -193,16 +223,32 @@ NetPrivacyViewStep::setConfigurationMap( const QVariantMap& cfg )
                 v.id = map.value( "id" ).toString();
                 v.name = map.value( "name" ).toString();
                 v.oui = map.value( "oui" ).toString();
+                if ( v.id.isEmpty() || v.name.isEmpty() || !ouiRegex.match( v.oui ).hasMatch() )
+                {
+                    cWarning() << "NetPrivacyViewStep: Skipping invalid custom vendor entry:" << v.id;
+                    continue;
+                }
                 m_vendors.append( v );
             }
         }
     }
+
+    bool foundVendor = false;
+    for ( const auto& v : m_vendors )
+    {
+        if ( v.id == m_selectedVendor )
+        {
+            foundVendor = true;
+            break;
+        }
+    }
+    if ( !foundVendor && !m_vendors.isEmpty() )
+        m_selectedVendor = m_vendors.first().id;
 }
 
 int NetPrivacyViewStep::macPolicy() const { return m_macPolicy; }
 QString NetPrivacyViewStep::macAddress() const { return m_macAddress; }
 QString NetPrivacyViewStep::selectedVendor() const { return m_selectedVendor; }
-bool NetPrivacyViewStep::ipv6Privacy() const { return m_ipv6Privacy; }
 int NetPrivacyViewStep::ipv6Mode() const { return m_ipv6Mode; }
 
 QVariantList
@@ -235,11 +281,6 @@ void NetPrivacyViewStep::setSelectedVendor( const QString& v )
     if ( m_selectedVendor != v ) { m_selectedVendor = v; Q_EMIT selectedVendorChanged(); }
 }
 
-void NetPrivacyViewStep::setIpv6Privacy( bool e )
-{
-    if ( m_ipv6Privacy != e ) { m_ipv6Privacy = e; Q_EMIT ipv6PrivacyChanged(); }
-}
-
 void NetPrivacyViewStep::setIpv6Mode( int m )
 {
     if ( m_ipv6Mode != m ) { m_ipv6Mode = m; Q_EMIT ipv6ModeChanged(); }
@@ -252,10 +293,14 @@ NetPrivacyViewStep::generatePreviewMac() const
     QString oui;
 
     if ( m_macPolicy == 1 )
+    {
+        quint8 first = static_cast<quint8>( rng->generate() % 256 );
+        first = static_cast<quint8>( ( first & 0xFE ) | 0x02 );
         oui = QStringLiteral( "%1:%2:%3" )
-                  .arg( ( rng->generate() % 256 ) | 0x02, 2, 16, QChar( '0' ) )
+                  .arg( first, 2, 16, QChar( '0' ) )
                   .arg( rng->generate() % 256, 2, 16, QChar( '0' ) )
                   .arg( rng->generate() % 256, 2, 16, QChar( '0' ) );
+    }
     else if ( m_macPolicy == 2 )
         oui = getVendorOUI( m_selectedVendor );
     else

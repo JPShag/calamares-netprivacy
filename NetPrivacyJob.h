@@ -17,7 +17,6 @@ public:
     explicit NetPrivacyJob( int macPolicy,
                             const QString& macAddress,
                             const QString& vendorOUI,
-                            bool ipv6Privacy,
                             int ipv6Mode,
                             QObject* parent = nullptr );
     ~NetPrivacyJob() override;
@@ -37,7 +36,6 @@ private:
     int m_macPolicy;
     QString m_macAddress;
     QString m_vendorOUI;
-    bool m_ipv6Privacy;
     int m_ipv6Mode;
 };
 

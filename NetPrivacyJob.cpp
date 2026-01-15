@@ -17,14 +17,12 @@
 NetPrivacyJob::NetPrivacyJob( int macPolicy,
                               const QString& macAddress,
                               const QString& vendorOUI,
-                              bool ipv6Privacy,
                               int ipv6Mode,
                               QObject* parent )
     : Calamares::CppJob( parent )
     , m_macPolicy( macPolicy )
     , m_macAddress( macAddress )
     , m_vendorOUI( vendorOUI )
-    , m_ipv6Privacy( ipv6Privacy )
     , m_ipv6Mode( ipv6Mode )
 {
 }
@@ -38,15 +36,34 @@ QString NetPrivacyJob::prettyStatusMessage() const { return tr( "Writing network
 Calamares::JobResult
 NetPrivacyJob::exec()
 {
-    // Validate OUI format to prevent shell injection
+    static const QRegularExpression macRegex( QStringLiteral( "^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$" ) );
+    static const QRegularExpression ouiRegex( QStringLiteral( "^[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}$" ) );
+
+    if ( m_macPolicy < 0 || m_macPolicy > 3 )
+    {
+        return Calamares::JobResult::error( tr( "Security Error" ),
+                                            tr( "Invalid MAC policy value. Aborting." ) );
+    }
+
+    if ( m_ipv6Mode < 0 || m_ipv6Mode > 2 )
+    {
+        return Calamares::JobResult::error( tr( "Security Error" ),
+                                            tr( "Invalid IPv6 mode value. Aborting." ) );
+    }
+
     if ( !m_vendorOUI.isEmpty() )
     {
-        static const QRegularExpression ouiRegex( "^[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}$" );
         if ( !ouiRegex.match( m_vendorOUI ).hasMatch() )
         {
             return Calamares::JobResult::error( tr( "Security Error" ), 
                                                 tr( "Invalid Vendor OUI format for network privacy. Aborting." ) );
         }
+    }
+
+    if ( m_macPolicy == 3 && !macRegex.match( m_macAddress ).hasMatch() )
+    {
+        return Calamares::JobResult::error( tr( "Security Error" ),
+                                            tr( "Invalid fixed MAC address format. Aborting." ) );
     }
 
     auto* gs = Calamares::JobQueue::instance()->globalStorage();
@@ -78,10 +95,8 @@ NetPrivacyJob::exec()
 Calamares::JobResult
 NetPrivacyJob::writeMacConfig( const QString& root ) const
 {
-    // Use /etc for local configuration
     const QString confDir = root + QStringLiteral( "/etc/NetworkManager/conf.d" );
     
-    // Check if NetworkManager is installed (check both lib and sbin)
     bool nmInstalled = QDir( root + "/usr/lib/NetworkManager" ).exists() || 
                        QDir( root + "/usr/sbin/NetworkManager" ).exists();
 
@@ -101,15 +116,15 @@ NetPrivacyJob::writeMacConfig( const QString& root ) const
 
     switch ( m_macPolicy )
     {
-    case 1: // Random
+    case 1: 
         s << "[device]\nwifi.scan-rand-mac-address=yes\n\n";
         s << "[connection]\nwifi.cloned-mac-address=random\nethernet.cloned-mac-address=random\n";
         break;
-    case 2: // Vendor/Stable
+    case 2: 
         s << "[device]\nwifi.scan-rand-mac-address=yes\n\n";
         s << "[connection]\nwifi.cloned-mac-address=stable\nethernet.cloned-mac-address=stable\n";
         break;
-    case 3: // Fixed
+    case 3: 
         if ( m_macAddress.isEmpty() )
             return Calamares::JobResult::error( tr( "Error" ), tr( "No MAC address provided." ) );
         s << "[connection]\nwifi.cloned-mac-address=" << m_macAddress << "\n";
@@ -124,7 +139,6 @@ NetPrivacyJob::writeMacConfig( const QString& root ) const
 
     cDebug() << "NetPrivacyJob: Wrote" << confPath;
 
-    // Vendor dispatcher script
     if ( m_macPolicy == 2 && !m_vendorOUI.isEmpty() )
     {
         const QString dispDir = root + QStringLiteral( "/etc/NetworkManager/dispatcher.d" );
@@ -133,22 +147,23 @@ NetPrivacyJob::writeMacConfig( const QString& root ) const
             const QString dispPath = dispDir + QStringLiteral( "/80-vendor-mac.sh" );
             QString script;
             QTextStream ds( &script );
+            
             ds << "#!/bin/bash\n";
             ds << "# Vendor MAC enforcement\n";
             ds << "set -euo pipefail\n\n";
-            // Security: Use single quotes for OUI to prevent expansion
             ds << "VENDOR_OUI='" << m_vendorOUI.toLower() << "'\n";
             ds << "IFACE=\"${1:-}\"\n";
             ds << "ACTION=\"${2:-}\"\n\n";
+            
             ds << "[[ \"$ACTION\" == \"up\" ]] || exit 0\n";
-            // Ignore loopback, veth, docker
             ds << "[[ \"$IFACE\" == \"lo\" || \"$IFACE\" == veth* || \"$IFACE\" == docker* ]] && exit 0\n\n";
-            // Safe read using < process substitution to avoid pipe issues
+            
             ds << "read -r CURRENT < <(ip link show dev \"$IFACE\" 2>/dev/null | awk '/ether/ {print tolower($2)}')\n";
             ds << "[[ \"${CURRENT:0:8}\" == \"$VENDOR_OUI\" ]] && exit 0\n\n";
             
-            ds << "NIC=$(printf '%02x:%02x:%02x' $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))\n";
+            ds << "NIC=$(od -An -N3 -tx1 /dev/urandom | tr -d ' \\n' | sed 's/\\(..\\)/\\1:/g;s/:$//')\n";
             ds << "NEW=\"${VENDOR_OUI}:${NIC}\"\n\n";
+            
             ds << "ip link set dev \"$IFACE\" down 2>/dev/null || true\n";
             ds << "ip link set dev \"$IFACE\" address \"$NEW\"\n";
             ds << "ip link set dev \"$IFACE\" up\n";
@@ -171,20 +186,13 @@ NetPrivacyJob::writeMacConfig( const QString& root ) const
 Calamares::JobResult
 NetPrivacyJob::writeSystemdLinkConfig( const QString& root ) const
 {
-    // Use /etc/systemd/network
     const QString linkDir = root + QStringLiteral( "/etc/systemd/network" );
 
     if ( !QDir( root + "/usr/lib/systemd" ).exists() )
-    {
-        cWarning() << "NetPrivacyJob: systemd not detected, skipping .link config";
         return Calamares::JobResult::ok();
-    }
 
     if ( !QDir().mkpath( linkDir ) )
-    {
-        cWarning() << "NetPrivacyJob: Cannot create" << linkDir;
-        return Calamares::JobResult::ok();
-    }
+        return Calamares::JobResult::error( tr( "Error" ), tr( "Cannot create: %1" ).arg( linkDir ) );
 
     const QString linkPath = linkDir + QStringLiteral( "/80-calamares-mac-privacy.link" );
     QString content;
@@ -205,6 +213,8 @@ NetPrivacyJob::writeSystemdLinkConfig( const QString& root ) const
 
     if ( writeFile( linkPath, content ) )
         cDebug() << "NetPrivacyJob: Wrote" << linkPath;
+    else
+        cWarning() << "NetPrivacyJob: Failed to write" << linkPath;
 
     return Calamares::JobResult::ok();
 }
@@ -214,7 +224,6 @@ NetPrivacyJob::writeIpv6Config( const QString& root ) const
 {
     if ( m_ipv6Mode == 2 )
     {
-        // Use /etc/sysctl.d/
         const QString sysctlDir = root + QStringLiteral( "/etc/sysctl.d" );
         if ( !QDir().mkpath( sysctlDir ) )
             return Calamares::JobResult::error( tr( "Error" ), tr( "Cannot create: %1" ).arg( sysctlDir ) );
@@ -234,10 +243,7 @@ NetPrivacyJob::writeIpv6Config( const QString& root ) const
     }
     else if ( m_ipv6Mode == 1 )
     {
-        // IPv6 privacy extensions for NetworkManager
-        // Use /etc/NetworkManager/conf.d
         const QString nmDir = root + QStringLiteral( "/etc/NetworkManager/conf.d" );
-        
         bool nmInstalled = QDir( root + "/usr/lib/NetworkManager" ).exists() || 
                            QDir( root + "/usr/sbin/NetworkManager" ).exists();
                            
@@ -253,8 +259,6 @@ NetPrivacyJob::writeIpv6Config( const QString& root ) const
                 cDebug() << "NetPrivacyJob: Wrote" << nmPath;
         }
 
-        // systemd-networkd config
-        // Use /etc/systemd/networkd.conf.d
         const QString networkdDir = root + QStringLiteral( "/etc/systemd/networkd.conf.d" );
         if ( QDir( root + "/usr/lib/systemd" ).exists() && QDir().mkpath( networkdDir ) )
         {

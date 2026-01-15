@@ -14,13 +14,13 @@ Pre-network MAC spoofing and IPv6 privacy configuration for Calamares installers
 When enabled, the module writes configuration to the target system:
 
 **MAC Spoofing:**
-- `/usr/lib/NetworkManager/conf.d/80-calamares-mac-privacy.conf`
-- `/usr/lib/systemd/network/80-calamares-mac-privacy.link`
+- `/etc/NetworkManager/conf.d/80-calamares-mac-privacy.conf`
+- `/etc/systemd/network/80-calamares-mac-privacy.link`
 - `/etc/NetworkManager/dispatcher.d/80-vendor-mac.sh` (vendor mode only)
 
 **IPv6 Privacy Extensions:**
-- `/usr/lib/NetworkManager/conf.d/80-calamares-ipv6-privacy.conf`
-- `/usr/lib/systemd/networkd.conf.d/80_ipv6-privacy-extensions.conf`
+- `/etc/NetworkManager/conf.d/80-calamares-ipv6-privacy.conf`
+- `/etc/systemd/networkd.conf.d/80_ipv6-privacy-extensions.conf`
 
 **IPv6 Disabled:**
 - `/etc/sysctl.d/99-calamares-disable-ipv6.conf`
