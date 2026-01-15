@@ -32,7 +32,6 @@ private:
     Calamares::JobResult writeIpv6Config( const QString& root ) const;
     Calamares::JobResult writeSystemdLinkConfig( const QString& root ) const;
 
-    bool ensureDirectory( const QString& path ) const;
     bool writeFile( const QString& path, const QString& content ) const;
 
     int m_macPolicy;
