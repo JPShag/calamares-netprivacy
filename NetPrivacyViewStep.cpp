@@ -11,6 +11,7 @@
 #include <libcalamares/utils/Variant.h>
 
 #include <QQmlContext>
+#include <QQmlEngine>
 #include <QQuickWidget>
 #include <QRandomGenerator>
 #include <QRegularExpression>

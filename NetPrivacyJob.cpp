@@ -80,8 +80,8 @@ NetPrivacyJob::exec()
     {
         auto r = writeMacConfig( root );
         if ( !r ) return r;
-        r = writeSystemdLinkConfig( root );
-        if ( !r ) return r;
+        auto linkResult = writeSystemdLinkConfig( root );
+        if ( !linkResult ) return linkResult;
     }
 
     if ( m_ipv6Mode != 0 )
