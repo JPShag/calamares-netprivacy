@@ -10,6 +10,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QTextStream>
 
@@ -37,6 +38,17 @@ QString NetPrivacyJob::prettyStatusMessage() const { return tr( "Writing network
 Calamares::JobResult
 NetPrivacyJob::exec()
 {
+    // Validate OUI format to prevent shell injection
+    if ( !m_vendorOUI.isEmpty() )
+    {
+        static const QRegularExpression ouiRegex( "^[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}$" );
+        if ( !ouiRegex.match( m_vendorOUI ).hasMatch() )
+        {
+            return Calamares::JobResult::error( tr( "Security Error" ), 
+                                                tr( "Invalid Vendor OUI format for network privacy. Aborting." ) );
+        }
+    }
+
     auto* gs = Calamares::JobQueue::instance()->globalStorage();
     if ( !gs )
         return Calamares::JobResult::internalError( tr( "Error" ), tr( "No GlobalStorage available." ), 1 );
@@ -66,10 +78,14 @@ NetPrivacyJob::exec()
 Calamares::JobResult
 NetPrivacyJob::writeMacConfig( const QString& root ) const
 {
-    const QString confDir = root + QStringLiteral( "/usr/lib/NetworkManager/conf.d" );
+    // Use /etc for local configuration
+    const QString confDir = root + QStringLiteral( "/etc/NetworkManager/conf.d" );
     
-    // Check if NetworkManager directory exists in target
-    if ( !QDir( root + "/usr/lib/NetworkManager" ).exists() )
+    // Check if NetworkManager is installed (check both lib and sbin)
+    bool nmInstalled = QDir( root + "/usr/lib/NetworkManager" ).exists() || 
+                       QDir( root + "/usr/sbin/NetworkManager" ).exists();
+
+    if ( !nmInstalled )
     {
         cWarning() << "NetPrivacyJob: NetworkManager not detected, skipping MAC config";
         return Calamares::JobResult::ok();
@@ -85,15 +101,15 @@ NetPrivacyJob::writeMacConfig( const QString& root ) const
 
     switch ( m_macPolicy )
     {
-    case 1:
+    case 1: // Random
         s << "[device]\nwifi.scan-rand-mac-address=yes\n\n";
         s << "[connection]\nwifi.cloned-mac-address=random\nethernet.cloned-mac-address=random\n";
         break;
-    case 2:
+    case 2: // Vendor/Stable
         s << "[device]\nwifi.scan-rand-mac-address=yes\n\n";
         s << "[connection]\nwifi.cloned-mac-address=stable\nethernet.cloned-mac-address=stable\n";
         break;
-    case 3:
+    case 3: // Fixed
         if ( m_macAddress.isEmpty() )
             return Calamares::JobResult::error( tr( "Error" ), tr( "No MAC address provided." ) );
         s << "[connection]\nwifi.cloned-mac-address=" << m_macAddress << "\n";
@@ -120,13 +136,17 @@ NetPrivacyJob::writeMacConfig( const QString& root ) const
             ds << "#!/bin/bash\n";
             ds << "# Vendor MAC enforcement\n";
             ds << "set -euo pipefail\n\n";
-            ds << "VENDOR_OUI=\"" << m_vendorOUI.toLower() << "\"\n";
+            // Security: Use single quotes for OUI to prevent expansion
+            ds << "VENDOR_OUI='" << m_vendorOUI.toLower() << "'\n";
             ds << "IFACE=\"${1:-}\"\n";
             ds << "ACTION=\"${2:-}\"\n\n";
             ds << "[[ \"$ACTION\" == \"up\" ]] || exit 0\n";
+            // Ignore loopback, veth, docker
             ds << "[[ \"$IFACE\" == \"lo\" || \"$IFACE\" == veth* || \"$IFACE\" == docker* ]] && exit 0\n\n";
-            ds << "CURRENT=$(ip link show dev \"$IFACE\" 2>/dev/null | awk '/ether/ {print tolower($2)}')\n";
+            // Safe read using < process substitution to avoid pipe issues
+            ds << "read -r CURRENT < <(ip link show dev \"$IFACE\" 2>/dev/null | awk '/ether/ {print tolower($2)}')\n";
             ds << "[[ \"${CURRENT:0:8}\" == \"$VENDOR_OUI\" ]] && exit 0\n\n";
+            
             ds << "NIC=$(printf '%02x:%02x:%02x' $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))\n";
             ds << "NEW=\"${VENDOR_OUI}:${NIC}\"\n\n";
             ds << "ip link set dev \"$IFACE\" down 2>/dev/null || true\n";
@@ -151,9 +171,9 @@ NetPrivacyJob::writeMacConfig( const QString& root ) const
 Calamares::JobResult
 NetPrivacyJob::writeSystemdLinkConfig( const QString& root ) const
 {
-    const QString linkDir = root + QStringLiteral( "/usr/lib/systemd/network" );
+    // Use /etc/systemd/network
+    const QString linkDir = root + QStringLiteral( "/etc/systemd/network" );
 
-    // Check if systemd-networkd directory structure exists
     if ( !QDir( root + "/usr/lib/systemd" ).exists() )
     {
         cWarning() << "NetPrivacyJob: systemd not detected, skipping .link config";
@@ -194,8 +214,8 @@ NetPrivacyJob::writeIpv6Config( const QString& root ) const
 {
     if ( m_ipv6Mode == 2 )
     {
-        // Disable IPv6 via sysctl - use /usr/lib/sysctl.d per distro standards
-        const QString sysctlDir = root + QStringLiteral( "/usr/lib/sysctl.d" );
+        // Use /etc/sysctl.d/
+        const QString sysctlDir = root + QStringLiteral( "/etc/sysctl.d" );
         if ( !QDir().mkpath( sysctlDir ) )
             return Calamares::JobResult::error( tr( "Error" ), tr( "Cannot create: %1" ).arg( sysctlDir ) );
 
@@ -215,8 +235,13 @@ NetPrivacyJob::writeIpv6Config( const QString& root ) const
     else if ( m_ipv6Mode == 1 )
     {
         // IPv6 privacy extensions for NetworkManager
-        const QString nmDir = root + QStringLiteral( "/usr/lib/NetworkManager/conf.d" );
-        if ( QDir( root + "/usr/lib/NetworkManager" ).exists() && QDir().mkpath( nmDir ) )
+        // Use /etc/NetworkManager/conf.d
+        const QString nmDir = root + QStringLiteral( "/etc/NetworkManager/conf.d" );
+        
+        bool nmInstalled = QDir( root + "/usr/lib/NetworkManager" ).exists() || 
+                           QDir( root + "/usr/sbin/NetworkManager" ).exists();
+                           
+        if ( nmInstalled && QDir().mkpath( nmDir ) )
         {
             const QString nmPath = nmDir + QStringLiteral( "/80-calamares-ipv6-privacy.conf" );
             QString nmContent;
@@ -229,7 +254,8 @@ NetPrivacyJob::writeIpv6Config( const QString& root ) const
         }
 
         // systemd-networkd config
-        const QString networkdDir = root + QStringLiteral( "/usr/lib/systemd/networkd.conf.d" );
+        // Use /etc/systemd/networkd.conf.d
+        const QString networkdDir = root + QStringLiteral( "/etc/systemd/networkd.conf.d" );
         if ( QDir( root + "/usr/lib/systemd" ).exists() && QDir().mkpath( networkdDir ) )
         {
             const QString networkdPath = networkdDir + QStringLiteral( "/80_ipv6-privacy-extensions.conf" );
